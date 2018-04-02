@@ -4,11 +4,16 @@ var session = require('express-session');
 var http = require('http');
 var qs = require('querystring');
 
-var port = process.env.PORT || 8001;
+var port = process.env.PORT || 8000;
 var app = express();
 var MongoClient = require('mongodb').MongoClient;
 var url = "mongodb://dooora:2233@ds119129.mlab.com:19129/a4";
+var server = http.createServer(app).listen(port);
+var socket = require('socket.io')(server);
+console.log('Server hosted at port:'+port);
 
+//user list
+var activeUsers = [];
 app.use(flash());
 app.use('/', express.static('./web'));
 
@@ -18,13 +23,29 @@ app.use(session({
   maxAge: 1000 * 60 * 10
 }));
 
+function removerUser(user){
+  var index = activeUsers.indexOf(user);
+  activeUsers.splice(index,1);
+}
+function isLoggedIn(req,res,next){
+  console.log(req.session,req.session.user);
+  if(req.session.user){
+    var sid=req.sessionID;
+    console.log('SID:',sid);
+    next();
+  }else{
+    req.flash('error','login first');
+    res.redirect('/login');
+  }
+}
 var head = `<!DOCTYPE HTML>
+
 <html>
 
 <head>
     <meta name="viewport" content="minimum-scale=1.0, width=device-width, maximum-scale=1.0, user-scalable=no"/>
     <meta charset="utf-8">
-    <meta lang="en"> 
+    <meta lang="en">
     <title>Assignment 4</title>
     <link rel="stylesheet" href="css/style.css">
 </head>`;
@@ -33,7 +54,7 @@ var foot = `</html>`;
 
 app.get('/login',function(req,res){
    var error = req.flash('error');
-   var body = `<body>    
+   var body = `<body>
     <section id="container">
         <form method="post" action="/login">
             <label id="adminlogin">ADMIN LOGIN</label>
@@ -56,14 +77,14 @@ app.post('/login',function(req,res){
    var user= null;
    var body="";
    req.on('data',function(data){
-      body += data.toString(); 
+      body += data.toString();
    });
    req.on('end',function(){
         var postObj = qs.parse(body);
-        var jsonObj = JSON.stringify(postObj);   
+        var jsonObj = JSON.stringify(postObj);
         var _username = JSON.parse(jsonObj).username;
         var _password = JSON.parse(jsonObj).password;
-       
+
         MongoClient.connect(url,function(err,client){
             if(err) console.log(err);
             var database = client.db('a4');
@@ -77,16 +98,47 @@ app.post('/login',function(req,res){
                     res.redirect('/login');
                 }else{
                     if(_password == result.password){
+                        req.session.user = result;
                         res.redirect('/welcome');
                     }else{
                     req.flash('error','the password is not correct');
-                    res.redirect('/login');  
+                    res.redirect('/login');
                     }
                 }
                });
-            });  
+            });
    });
-    
+
+});
+
+app.get('/welcome',isLoggedIn,function(req,res){
+  var user = req.session.user;
+  var dash = user.username+ `<a href="/logout">LOGOUT</a>` ;
+  res.end(head+dash+foot);
+  socket.on("connection",function(client){
+   console.log('connected');
+
+       activeUsers.push(user);
+       client.user = req.session.user;
+       printUsers(activeUsers);
+
+       client.broadcast.emit("userUpdate",{
+       users:activeUsers
+       client.on("disconnect",function(){
+       removeUser(client.user);
+
+       client.broadcast.emit("disconnect",{
+        users:activeUsers
+       });
+      });
+    });
+  });
+});
+app.get('/logout',function(req,res){
+  req.session.regenerate(function(err){
+    req.flash('error','logged out');
+    res.redirect('/login');
+  });
 });
 
 app.get('/register.html',function(req,res){
@@ -97,11 +149,11 @@ app.post('/register',function(req,res){
    var user= null;
    var body="";
    req.on('data',function(data){
-      body += data.toString(); 
-   }); 
+      body += data.toString();
+   });
    req.on('end',function(){
         var postObj = qs.parse(body);
-        var jsonObj = JSON.stringify(postObj);   
+        var jsonObj = JSON.stringify(postObj);
         var _username = JSON.parse(jsonObj).username;
         var _password = JSON.parse(jsonObj).password;
         MongoClient.connect(url,function(err,client){
@@ -127,12 +179,9 @@ app.post('/register',function(req,res){
                    res.redirect('/login');
                    res.end();
                }
-                
+
             });
-            
+
         });
 });
 });
-
-http.createServer(app).listen(port);
-console.log("log in:"+port);
